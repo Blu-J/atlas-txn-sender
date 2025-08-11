@@ -169,6 +169,18 @@ impl AtlasTxnSenderServer for AtlasTxnSenderImpl {
                     request_metadata: request_metadata.clone(),
                 })
             })
+            .filter(|x| {
+                let Ok(x) = x else {
+                    return true;
+                };
+
+                let signature = x.versioned_transaction.signatures[0].to_string();
+                if self.transaction_store.has_signature(&signature) {
+                    statsd_count!("duplicate_transaction", 1, "api_key" => &api_key);
+                    return false;
+                }
+                true
+            })
             .collect();
         let transactions = match transactions {
             Ok(txs) => txs,
@@ -176,19 +188,6 @@ impl AtlasTxnSenderServer for AtlasTxnSenderImpl {
                 return Err(e);
             }
         };
-        if transactions.is_empty() {}
-
-        for TransactionData {
-            versioned_transaction,
-            ..
-        } in transactions.iter()
-        {
-            let signature = versioned_transaction.signatures[0].to_string();
-            if self.transaction_store.has_signature(&signature) {
-                statsd_count!("duplicate_transaction", 1, "api_key" => &api_key);
-                return Ok(signature);
-            }
-        }
         let result = Ok(transactions[0].versioned_transaction.signatures[0].to_string());
         if let Err(err) = self.txn_sender.send_transactions(transactions).await {
             return Err(invalid_request(&format!(
